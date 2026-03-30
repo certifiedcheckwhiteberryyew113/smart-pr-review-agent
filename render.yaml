@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: smart-pr-review-bot-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: smart-pr-review-agent
+      - key: CHROMA_PERSIST_DIR
+        value: ./chroma
+      - key: GITHUB_MCP_URL
+        value: https://api.githubcopilot.com/mcp/
+      - key: FRONTEND_URL
+        value: http://localhost:5173
+
