@@ -1,40 +1,84 @@
+import json
+
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langsmith import traceable
 
-from backend.agents.indexer import fetch_chunks_for_ids
-from backend.config import get_settings
+from backend.config import settings
+from backend.models.schemas import BugHuntOutput
 from backend.models.state import WorkflowState
+from backend.rag.code_indexer import search_codebase
 
 
-async def hunt_bugs(state: WorkflowState) -> dict[str, list[str]]:
-    """Surfaces likely defect patterns and failure modes from the pull request diff."""
-    context = fetch_chunks_for_ids(state["rag_context_ids"])
-    if not context:
-        return {"bugs_found": ["Insufficient diff context prevented deeper bug analysis."]}
-    payload = "\n\n".join(context.values())[:12000]
-    settings = get_settings()
-    llm = ChatOpenAI(
-        api_key=settings.openai_api_key,
-        model="gpt-4.1-mini",
-        temperature=0.1,
+@traceable(run_type="llm", name="hunt_bugs_llm")
+async def _hunt_bugs_llm(system: SystemMessage, human: HumanMessage) -> str:
+    """Calls the configured LLM to generate bug reports."""
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        groq_api_key=settings.groq_api_key,
+        model="llama-3.3-70b",
+        temperature=0.2,
     )
-    messages = [
-        SystemMessage(
-            content=(
-                "You hunt concrete bugs: races, null handling, bad assumptions, security. "
-                "Emit bullet lines starting with '* ' and keep them factual."
-            ),
+    result = await llm.ainvoke([system, human])
+    return str(result.content)
+
+
+@traceable(run_type="agent", name="hunt_bugs")
+async def hunt_bugs(state: WorkflowState) -> WorkflowState:
+    """Finds concrete bugs using review findings and code retrieval."""
+    repo_name = state["repo_full_name"]
+    review_findings = state.get("review_findings", [])
+    suspicious_queries: list[str] = []
+    for finding in review_findings:
+        review_summary = str(finding.get("review_summary", ""))
+        if review_summary:
+            suspicious_queries.append(review_summary)
+        for comment in finding.get("inline_comments", []):
+            body = str(comment.get("body", ""))
+            if body:
+                suspicious_queries.append(body)
+
+    rag_blocks: list[str] = []
+    for query in suspicious_queries[:5]:
+        try:
+            docs = search_codebase(query[:2500], repo_name, k=5)
+            rag_blocks.append(
+                "\n".join(
+                    [
+                        f"{doc.metadata.get('file','')}:{doc.metadata.get('start_line',0)}-{doc.metadata.get('end_line',0)}\n{doc.page_content[:2000]}"
+                        for doc in docs
+                    ],
+                )[:6000],
+            )
+        except Exception as exc:
+            rag_blocks.append(f"RAG search failed: {exc}"[:6000])
+
+    rag_context = "\n\n".join(rag_blocks)[:12000]
+    system = SystemMessage(
+        content=(
+            "You are a senior bug hunter. "
+            "Return only JSON matching the BugHuntOutput schema. "
+            "Each bug must include file, line, description, severity, and suggested_fix."
         ),
-        HumanMessage(
-            content=(
-                f"Review prior findings: {state['review_findings']}\n\nDIFF:\n{payload}"
-            ),
+    )
+    human = HumanMessage(
+        content=json.dumps(
+            {
+                "repo_full_name": repo_name,
+                "pr_number": state["pr_number"],
+                "review_findings": review_findings,
+                "rag_context": rag_context,
+            },
+            ensure_ascii=False,
         ),
-    ]
-    result = await llm.ainvoke(messages)
-    text = str(result.content)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    bugs = [line[2:].strip() if line.startswith("* ") else line for line in lines]
-    if not bugs:
-        bugs = [text.strip()]
-    return {"bugs_found": bugs}
+    )
+    updated = dict(state)
+    try:
+        raw = await _hunt_bugs_llm(system, human)
+        parsed = BugHuntOutput.model_validate_json(raw)
+        updated["bugs_found"] = parsed.bugs_found
+        updated["error"] = ""
+    except Exception as exc:
+        updated["bugs_found"] = []
+        updated["error"] = str(exc)[:2000]
+    return updated

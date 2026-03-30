@@ -1,49 +1,218 @@
+import asyncio
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langsmith import traceable
+from pydantic import BaseModel
 
-from backend.agents.indexer import fetch_chunks_for_ids
-from backend.config import get_settings
-from backend.models.state import WorkflowState
+from backend.auth.github_auth import generate_jwt, get_installation_token
+from backend.config import settings
+from backend.models.state import FixPatch, WorkflowState
+from backend.rag.code_indexer import clone_repository, search_codebase
 
 
-async def draft_fix_patch(state: WorkflowState) -> dict[str, str]:
-    """Authors a unified diff that addresses the raised issues without applying it."""
-    context = fetch_chunks_for_ids(state["rag_context_ids"])
-    if not context:
-        return {"fix_patch": ""}
-    settings = get_settings()
-    llm = ChatOpenAI(
-        api_key=settings.openai_api_key,
-        model="gpt-4.1-mini",
-        temperature=0.1,
+class _FilePatch(BaseModel):
+    path: str
+    content: str
+
+
+class _FixPlan(BaseModel):
+    files: list[_FilePatch]
+
+
+def _repo_has_py_tests(repo_dir: Path) -> bool:
+    """Detects whether the repository likely uses pytest."""
+    return (repo_dir / "pyproject.toml").exists() or (repo_dir / "pytest.ini").exists() or (repo_dir / "tests").exists()
+
+
+def _repo_has_js_tests(repo_dir: Path) -> bool:
+    """Detects whether the repository likely uses npm tests."""
+    return (repo_dir / "package.json").exists()
+
+
+def _test_command(repo_dir: Path) -> list[str]:
+    """Selects the test command based on detected project type."""
+    if _repo_has_py_tests(repo_dir):
+        return ["pytest", "-q"]
+    if _repo_has_js_tests(repo_dir):
+        return ["npm", "test"]
+    return ["python", "-m", "compileall", "."]
+
+
+def _safe_repo_relative_path(repo_dir: Path, file_path: str) -> Path:
+    """Resolves a repo-relative path safely within the repository."""
+    cleaned = file_path.replace("\\", "/").lstrip("/")
+    if cleaned.startswith("../") or "/../" in cleaned or ".." in cleaned.split("/"):
+        raise ValueError("invalid_file_path")
+    resolved = (repo_dir / cleaned).resolve()
+    if repo_dir.resolve() not in resolved.parents and resolved != repo_dir.resolve():
+        raise ValueError("path_escape")
+    return resolved
+
+
+def _run_tests(repo_dir: Path) -> tuple[bool, str]:
+    """Runs tests and returns pass status and combined output."""
+    cmd = _test_command(repo_dir)
+    proc = subprocess.run(
+        cmd,
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    messages = [
-        SystemMessage(
-            content=(
-                "You write minimal unified diffs that fix described issues. "
-                "Return only the diff text starting with 'diff --git'."
-            ),
+    ok = proc.returncode == 0
+    combined = ""
+    if proc.stdout:
+        combined += proc.stdout
+    if proc.stderr:
+        combined += proc.stderr
+    return ok, combined[-20000:]
+
+
+def _git_diff(repo_dir: Path) -> str:
+    """Returns the current git diff for the working tree."""
+    proc = subprocess.run(
+        ["git", "diff"],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (proc.stdout or "").strip()
+
+
+def _restore_worktree(repo_dir: Path) -> None:
+    """Restores repository files to HEAD."""
+    subprocess.run(
+        ["git", "checkout", "--", "."],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@traceable(run_type="llm", name="draft_fix_llm")
+async def _draft_fix_llm(prompt_body: str) -> str:
+    """Calls the configured LLM to draft a fix plan."""
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        groq_api_key=settings.groq_api_key,
+        model="llama-3.3-70b",
+        temperature=0.2,
+    )
+    system = SystemMessage(
+        content=(
+            "You are an expert software engineer. "
+            "Return only JSON matching the _FixPlan schema: "
+            "files is a list of {path, content} objects. "
+            "Use repository-relative paths. "
+            "Provide complete new file contents."
         ),
-        HumanMessage(
-            content=(
-                f"Issues: {state['issues_raised']}\n"
-                f"Bugs: {state['bugs_found']}\n"
-                f"Context:\n{str(context)[:9000]}"
-            ),
-        ),
-    ]
-    result = await llm.ainvoke(messages)
-    text = str(result.content).strip()
-    if not text.startswith("diff --git"):
-        text = "\n".join(
-            [
-                f"diff --git a/{state['repo_full_name']} b/{state['repo_full_name']}",
-                "--- a/README.md",
-                "+++ b/README.md",
-                "@@ -0,0 +1,2 @@",
-                "+# automated suggestion",
-                "+# verify locally before merge",
-                text,
-            ],
-        )
-    return {"fix_patch": text, "approval_status": "approved"}
+    )
+    human = HumanMessage(content=prompt_body)
+    result = await llm.ainvoke([system, human])
+    return str(result.content)
+
+
+def _extract_fix_plan_json(raw: str) -> str:
+    """Extracts the JSON object from an LLM response."""
+    match = re.search(r"\{[\\s\\S]*\}", raw.strip())
+    return match.group(0) if match else raw.strip()
+
+
+async def _fetch_installation_token(repo_full_name: str) -> str:
+    """Fetches a GitHub installation access token for repository cloning."""
+    owner, repo = repo_full_name.split("/", 1)
+    jwt_token = generate_jwt()
+    installation_url = f"https://api.github.com/repos/{owner}/{repo}/installation"
+    headers_jwt = {
+        "Authorization": f"Bearer {jwt_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        installation_resp = await client.get(installation_url, headers=headers_jwt)
+        installation_resp.raise_for_status()
+        installation_payload = installation_resp.json()
+        installation_id = int(installation_payload["id"])
+        installation_token = await get_installation_token(installation_id)
+    return installation_token
+
+
+async def draft_fix(state: WorkflowState) -> WorkflowState:
+    """Generates, applies, tests, and returns a fix patch for the identified bugs."""
+    repo_full_name = state["repo_full_name"]
+    installation_token = await _fetch_installation_token(repo_full_name)
+    owner, repo = repo_full_name.split("/", 1)
+    repo_url = f"https://github.com/{owner}/{repo}.git"
+    clone_dir = await asyncio.to_thread(clone_repository, repo_url, installation_token)
+    temp_root = Path(clone_dir).parent
+    attempt_outputs: list[str] = []
+    files_changed: list[str] = []
+    fix_diff = ""
+    test_output = ""
+    co_authored_by = "Co-authored-by: smart-pr-review-bot <smart-pr-review-bot@users.noreply.github.com>"
+    try:
+        for attempt in range(3):
+            if attempt > 0:
+                _restore_worktree(Path(clone_dir))
+            rag_blocks: list[str] = []
+            for bug in state.get("bugs_found", []):
+                bug_file = str(bug.get("file", ""))
+                bug_line = int(bug.get("line", 0))
+                bug_desc = str(bug.get("description", ""))
+                query = f"{bug_file}:{bug_line}\n{bug_desc}\nSuggested fix: {bug.get('suggested_fix','')}"
+                docs = search_codebase(query[:3000], repo_full_name, k=5)
+                rag_blocks.append(
+                    "\n".join(
+                        [
+                            f"{doc.metadata.get('file','')}:{doc.metadata.get('start_line',0)}-{doc.metadata.get('end_line',0)}\n{doc.page_content[:2000]}"
+                            for doc in docs
+                        ],
+                    )[:7000]
+                )
+            rag_context = "\n\n".join(rag_blocks)[:12000]
+            attempt_error_context = attempt_outputs[-1] if attempt_outputs else ""
+            prompt_body = json.dumps(
+                {
+                    "repo_full_name": repo_full_name,
+                    "pr_number": state["pr_number"],
+                    "issues_raised": state.get("issues_raised", []),
+                    "bugs_found": state.get("bugs_found", []),
+                    "rag_context": rag_context,
+                    "test_error_context": attempt_error_context,
+                },
+                ensure_ascii=False,
+            )
+            raw = await _draft_fix_llm(prompt_body)
+            fix_json = _extract_fix_plan_json(raw)
+            plan = _FixPlan.model_validate_json(fix_json)
+            for fp in plan.files:
+                target_path = _safe_repo_relative_path(Path(clone_dir), fp.path)
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(fp.content, encoding="utf-8")
+            files_changed = [str(f.path).replace("\\", "/") for f in plan.files]
+            ok, out = _run_tests(Path(clone_dir))
+            test_output = out
+            attempt_outputs.append(out)
+            if ok:
+                fix_diff = _git_diff(Path(clone_dir))
+                break
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+    updated = dict(state)
+    updated["fix_patch"] = {
+        "diff": fix_diff,
+        "files_changed": files_changed,
+        "test_output": test_output,
+        "co_authored_by": co_authored_by,
+    }
+    updated["approval_status"] = "tests_passed" if fix_diff else "tests_failed"
+    updated["error"] = "" if fix_diff else updated.get("error", "")
+    return updated

@@ -1,39 +1,61 @@
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+import httpx
+from langsmith import traceable
 
-from backend.config import get_settings
+from backend.auth.github_auth import generate_jwt, get_installation_token
 from backend.models.state import WorkflowState
 
 
-async def draft_issues(state: WorkflowState) -> dict[str, object]:
-    """Turns detected defects into GitHub-ready issue descriptions."""
-    settings = get_settings()
-    llm = ChatOpenAI(
-        api_key=settings.openai_api_key,
-        model="gpt-4.1-mini",
-        temperature=0.25,
-    )
-    messages = [
-        SystemMessage(
-            content=(
-                "Draft actionable GitHub issues. Each issue must be one line formatted as "
-                "TITLE | BODY where BODY summarizes impacted files and a mitigation."
-            ),
-        ),
-        HumanMessage(
-            content=(
-                f"Repo {state['repo_full_name']} PR #{state['pr_number']}.\n"
-                f"Bugs: {state['bugs_found']}\n"
-                f"Review notes: {state['review_findings']}"
-            ),
-        ),
-    ]
-    result = await llm.ainvoke(messages)
-    text = str(result.content)
-    issues = [line.strip() for line in text.splitlines() if "|" in line]
-    extra: dict[str, object] = {"issues_raised": issues or [text.strip()]}
-    if state["mode"] == "human_in_loop":
-        extra["approval_status"] = "pending"
-    else:
-        extra["approval_status"] = "skipped"
-    return extra
+@traceable(run_type="agent", name="raise_issues")
+async def raise_issues(state: WorkflowState) -> WorkflowState:
+    """Creates GitHub issues for detected bugs and returns their URLs."""
+    owner, repo = state["repo_full_name"].split("/", 1)
+    jwt_token = generate_jwt()
+    installation_url = f"https://api.github.com/repos/{owner}/{repo}/installation"
+    headers_jwt = {
+        "Authorization": f"Bearer {jwt_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        installation_resp = await client.get(installation_url, headers=headers_jwt)
+        installation_resp.raise_for_status()
+        installation_payload = installation_resp.json()
+        installation_id = int(installation_payload["id"])
+        installation_token = await get_installation_token(installation_id)
+        api_headers = {
+            "Authorization": f"Bearer {installation_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        issue_urls: list[str] = []
+        for bug in state.get("bugs_found", []):
+            file = str(bug.get("file", ""))
+            line = int(bug.get("line", 0))
+            severity = str(bug.get("severity", ""))
+            description = str(bug.get("description", ""))
+            suggested_fix = str(bug.get("suggested_fix", ""))
+            title = f"[{severity or 'bug'}] {file}:{line}"
+            body = (
+                "## Bug detected by smart-pr-review-bot\n"
+                f"**File:** {file}:{line}\n"
+                f"**Severity:** {severity}\n"
+                f"**Description:** {description}\n"
+                f"**Suggested fix:** {suggested_fix}\n"
+                "---\n"
+                f"  *Auto-detected via RAG analysis of PR #{state['pr_number']}*\n"
+            )
+            create_url = f"https://api.github.com/repos/{owner}/{repo}/issues"
+            payload = {
+                "title": title,
+                "body": body,
+                "labels": ["bug", "ai-detected"],
+                "assignees": [],
+            }
+            issue_resp = await client.post(create_url, headers=api_headers, json=payload)
+            issue_resp.raise_for_status()
+            issue_payload = issue_resp.json()
+            issue_urls.append(str(issue_payload["html_url"]))
+    updated = dict(state)
+    updated["issues_raised"] = issue_urls
+    updated["error"] = ""
+    return updated
