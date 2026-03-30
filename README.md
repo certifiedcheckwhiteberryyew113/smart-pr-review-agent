@@ -1,11 +1,176 @@
-# Smart PR Review Agent
-## Architecture
-![Architecture](./docs/architecture.png)
+<div align="center">
+
+<img src="./docs/banner.png" alt="smart-pr-review-bot banner" width="100%"/>
+
+# smart-pr-review-bot
+
+**Autonomous multi-agent AI system for intelligent GitHub PR review and bug detection.**
+Powered by LangGraph, RAG + tree-sitter, and GitHub MCP for real codebase understanding.
+Automatically raises GitHub Issues, drafts fixes, and opens PRs as `smart-pr-review-bot[bot]`.
+Supports Review Only, Human-in-Loop, and Auto Pilot modes with full LangSmith tracing.
+
+<br/>
+
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.x-7F77DD?style=flat)](https://langchain.com/langgraph)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Groq](https://img.shields.io/badge/Groq-llama--3.3--70b-F55036?style=flat)](https://groq.com)
+[![License](https://img.shields.io/badge/License-MIT-22c55e?style=flat)](./LICENSE)
+
+<br/>
+
+</div>
+
+---
+
+## What it does
+
+Paste a PR URL. The agent does the rest.
+
+```
+PR URL → Index codebase → Review PR → Hunt bugs → Raise Issues → Draft fix → Open fix PR
 ```
 
-FastAPI backend with LangGraph workflow, GitHub App integration, and a Vite + React UI.
+Three modes, one URL:
 
-Smart PR review that streams agent progress via SSE and can pause for human approval before drafting and testing fixes.
+| Mode | What happens |
+|---|---|
+| **Review only** | Reviews PR, posts inline comments, raises GitHub Issues for bugs found |
+| **Human-in-loop** | Same as above + shows fix diff, waits for your approval before pushing |
+| **Auto pilot** | Fully autonomous — reviews, fixes, runs tests, opens fix PR automatically |
+
+---
+
+## Demo
+
+<img src="./docs/demo.gif" alt="demo" width="100%"/>
+
+---
+
+## Agent flow
+
+<img src="./docs/agent_flow.png" alt="agent flow diagram" width="100%"/>
+
+```mermaid
+flowchart TD
+  User[User] --> Frontend[Frontend React UI]
+  Frontend -->|POST /review| API[FastAPI backend]
+  API -->|thread_id| LangGraph[LangGraph workflow]
+  LangGraph --> Indexer[Index repository + tree-sitter chunks]
+  Indexer --> Chroma[Chroma vector store]
+  LangGraph --> Reviewer[Groq PR review + confidence]
+  Reviewer -->|low confidence| BugHunter[Groq bug hunting]
+  BugHunter --> IssueRaiser[Create GitHub issues]
+  IssueRaiser --> Human[Interrupt for human approval]
+  Human -->|approved| FixDraft[Groq patch draft + apply + tests]
+  Human -->|rejected| End[Stop]
+  FixDraft --> Frontend
+  API -->|GET /stream| FrontendStream[SSE events]
+
+  style User fill:#185FA5,color:#fff
+  style Frontend fill:#185FA5,color:#fff
+  style API fill:#0F6E56,color:#fff
+  style LangGraph fill:#534AB7,color:#fff
+  style Indexer fill:#854F0B,color:#fff
+  style Chroma fill:#3B6D11,color:#fff
+  style Reviewer fill:#854F0B,color:#fff
+  style BugHunter fill:#854F0B,color:#fff
+  style IssueRaiser fill:#854F0B,color:#fff
+  style Human fill:#993C1D,color:#fff
+  style FixDraft fill:#854F0B,color:#fff
+  style End fill:#5F5E5A,color:#fff
+  style FrontendStream fill:#185FA5,color:#fff
+```
+
+---
+
+## Full architecture
+
+<img src="./docs/architecture.png" alt="architecture diagram" width="100%"/>
+
+```mermaid
+flowchart TD
+    UI["Frontend — React + Vite\nPR URL · Mode selector · Live feed · Diff viewer"]
+    API["FastAPI Backend — Render\n/review · /stream · /approve · /health"]
+    LG["LangGraph Workflow\nreview_only · human_in_loop · auto_pilot"]
+    IDX["Indexer\ntree-sitter + ChromaDB"]
+    REV["Reviewer\ninline PR comments"]
+    BUG["Bug Hunter\ndeep RAG search"]
+    ISS["Issue Raiser\nGitHub issues"]
+    FIX["Fix Drafter\npatch + run tests"]
+    MCP["GitHub MCP\nremote server"]
+    CHROMA["ChromaDB\nvector store"]
+    GROQ["Groq LLM\nllama-3.3-70b"]
+    SMITH["LangSmith\nfull traces"]
+    PG["Supabase\nPostgres checkpoints"]
+    GH["GitHub App\nsmart-pr-review-bot"]
+
+    UI -->|SSE / HTTP| API
+    API --> LG
+    LG --> IDX
+    LG --> REV
+    LG --> BUG
+    LG --> ISS
+    LG --> FIX
+    IDX --> CHROMA
+    REV --> GROQ
+    BUG --> CHROMA
+    BUG --> GROQ
+    FIX --> GROQ
+    API --> MCP
+    MCP --> GH
+    LG --> PG
+    REV --> SMITH
+    BUG --> SMITH
+    FIX --> SMITH
+
+    style UI fill:#185FA5,color:#fff
+    style API fill:#0F6E56,color:#fff
+    style LG fill:#534AB7,color:#fff
+    style IDX fill:#854F0B,color:#fff
+    style REV fill:#854F0B,color:#fff
+    style BUG fill:#854F0B,color:#fff
+    style ISS fill:#854F0B,color:#fff
+    style FIX fill:#854F0B,color:#fff
+    style MCP fill:#3B6D11,color:#fff
+    style CHROMA fill:#3B6D11,color:#fff
+    style GROQ fill:#3B6D11,color:#fff
+    style SMITH fill:#3B6D11,color:#fff
+    style PG fill:#5F5E5A,color:#fff
+    style GH fill:#5F5E5A,color:#fff
+```
+
+---
+
+## Tech stack
+
+<img src="./docs/tech_stack.png" alt="tech stack" width="100%"/>
+
+| Layer | Technology |
+|---|---|
+| LLM | Groq `llama-3.3-70b` — free, fast |
+| Agent orchestration | LangGraph 1.x with conditional edges + checkpointing |
+| GitHub integration | Remote GitHub MCP server via Streamable HTTP |
+| Code parsing | tree-sitter — function and class level chunks |
+| Vector store | ChromaDB — embedded, no extra service |
+| Backend | FastAPI + SSE streaming |
+| Frontend | React + Vite |
+| Checkpointing | Supabase Postgres (LangGraph HITL state) |
+| Tracing | LangSmith — full agent execution traces |
+| Deploy | Render (backend) + Vercel (frontend) |
+
+---
+
+## How RAG works here
+
+Unlike normal document RAG that splits text by character count, this project uses **tree-sitter** to parse code into meaningful chunks — whole functions, whole classes. So when the bug hunter asks "what does `authenticate_user` do?" ChromaDB returns the complete function, not a random slice.
+
+```
+Normal RAG          →  random 500-char chunks  →  broken functions
+tree-sitter RAG     →  complete functions       →  real understanding
+```
+
+---
 
 ## Setup
 
