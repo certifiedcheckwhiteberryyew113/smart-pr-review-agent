@@ -10,9 +10,9 @@ from langsmith import traceable
 from pydantic import BaseModel
 
 from backend.auth.github_auth import generate_jwt, get_installation_token
-from backend.config import settings
-from backend.models.state import FixPatch, WorkflowState
+from backend.models.state import WorkflowState
 from backend.rag.code_indexer import clone_repository, search_codebase
+from backend.llm_security import BLOCKED_PREFIX, is_blocked_response, secure_llm_call
 
 
 class _FilePatch(BaseModel):
@@ -99,13 +99,6 @@ def _restore_worktree(repo_dir: Path) -> None:
 @traceable(run_type="llm", name="draft_fix_llm")
 async def _draft_fix_llm(prompt_body: str) -> str:
     """Calls the configured LLM to draft a fix plan."""
-    from langchain_groq import ChatGroq
-
-    llm = ChatGroq(
-        groq_api_key=settings.groq_api_key,
-        model="llama-3.3-70b",
-        temperature=0.2,
-    )
     system = SystemMessage(
         content=(
             "You are an expert software engineer. "
@@ -116,8 +109,8 @@ async def _draft_fix_llm(prompt_body: str) -> str:
         ),
     )
     human = HumanMessage(content=prompt_body)
-    result = await llm.ainvoke([system, human])
-    return str(result.content)
+    prompt_text = f"{system.content}\n\n{human.content}"
+    return await secure_llm_call(prompt_text)
 
 
 def _extract_fix_plan_json(raw: str) -> str:
@@ -158,6 +151,7 @@ async def draft_fix(state: WorkflowState) -> WorkflowState:
     fix_diff = ""
     test_output = ""
     co_authored_by = "Co-authored-by: smart-pr-review-bot <smart-pr-review-bot@users.noreply.github.com>"
+    blocked_error = ""
     try:
         for attempt in range(3):
             if attempt > 0:
@@ -191,6 +185,10 @@ async def draft_fix(state: WorkflowState) -> WorkflowState:
                 ensure_ascii=False,
             )
             raw = await _draft_fix_llm(prompt_body)
+            if is_blocked_response(raw) or raw.startswith(BLOCKED_PREFIX):
+                blocked_error = "LLM call blocked by input security policy."
+                test_output = (test_output or "") + blocked_error
+                break
             fix_json = _extract_fix_plan_json(raw)
             plan = _FixPlan.model_validate_json(fix_json)
             for fp in plan.files:
@@ -204,6 +202,111 @@ async def draft_fix(state: WorkflowState) -> WorkflowState:
             if ok:
                 fix_diff = _git_diff(Path(clone_dir))
                 break
+        if fix_diff:
+            pr_detail_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{state['pr_number']}"
+            headers = {
+                "Authorization": f"Bearer {installation_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                pr_detail_resp = await client.get(pr_detail_url, headers=headers)
+                pr_detail_resp.raise_for_status()
+                pr_detail_payload = pr_detail_resp.json()
+                base_ref = str(pr_detail_payload["base"]["ref"])
+                head_user = owner
+                bot_branch = f"smart-pr-review-bot/fix-{state['pr_number']}-{int(asyncio.get_running_loop().time() * 1000)}"
+                subprocess.run(
+                    ["git", "checkout", "-B", bot_branch],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", "smart-pr-review-bot"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "config", "user.email", "smart-pr-review-bot@users.noreply.github.com"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                commit_message = f"chore: fix PR #{state['pr_number']} issues"
+                commit_proc = subprocess.run(
+                    ["git", "commit", "-m", commit_message],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if commit_proc.returncode == 0:
+                    push_proc = subprocess.run(
+                        ["git", "push", "-u", "origin", bot_branch],
+                        cwd=str(clone_dir),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                else:
+                    push_proc = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=commit_proc.stderr)
+                create_pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+                pr_title = f"[smart-pr-review-bot] Fix PR #{state['pr_number']}"
+                pr_body = (
+                    "## Smart fix drafted by smart-pr-review-agent\n"
+                    f"Base branch: `{base_ref}`\n"
+                    "This PR was created from the bot branch after local tests passed.\n"
+                    f"\nOriginal PR: {state['pr_url']}\n"
+                )
+                create_payload = {
+                    "title": pr_title,
+                    "head": f"{head_user}:{bot_branch}",
+                    "base": base_ref,
+                    "body": pr_body,
+                }
+                create_pr_resp = await client.post(create_pr_url, headers=headers, json=create_payload)
+                created = False
+                fix_pr_url = ""
+                fix_pr_number = None
+                if create_pr_resp.status_code in (201, 200):
+                    created = True
+                    created_payload = create_pr_resp.json()
+                    fix_pr_url = str(created_payload["html_url"])
+                    fix_pr_number = created_payload["number"]
+                else:
+                    created = False
+                merged = False
+                merge_status = ""
+                should_merge = state["mode"] in {"auto_pilot", "human_in_loop"} and str(state.get("approval_status", "")).lower() in {"approved", "tests_passed", "merged", "queued"}
+                if created and should_merge and fix_pr_number is not None:
+                    merge_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{fix_pr_number}/merge"
+                    merge_payload = {"merge_method": "squash"}
+                    merge_resp = await client.put(merge_url, headers=headers, json=merge_payload)
+                    if merge_resp.status_code == 200:
+                        merged = True
+                        merge_status = "merged"
+                    else:
+                        merge_status = f"merge_failed:{merge_resp.status_code}"
+                if fix_diff:
+                    extra_info = []
+                    if fix_pr_url:
+                        extra_info.append(f"Fix PR: {fix_pr_url}")
+                    if merge_status:
+                        extra_info.append(f"Merge status: {merge_status}")
+                    if extra_info:
+                        test_output = (test_output or "") + "\n" + "\n".join(extra_info)
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
     updated = dict(state)
@@ -214,5 +317,8 @@ async def draft_fix(state: WorkflowState) -> WorkflowState:
         "co_authored_by": co_authored_by,
     }
     updated["approval_status"] = "tests_passed" if fix_diff else "tests_failed"
-    updated["error"] = "" if fix_diff else updated.get("error", "")
+    if fix_diff:
+        updated["error"] = ""
+    else:
+        updated["error"] = blocked_error or updated.get("error", "")
     return updated
