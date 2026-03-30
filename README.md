@@ -65,7 +65,7 @@ Three modes, one URL:
 
 | Layer | Technology |
 |---|---|
-| LLM | Groq `llama-3.3-70b` — free, fast |
+| LLM | Groq by default; Claude/Gemini via BYOK |
 | Agent orchestration | LangGraph 1.x with conditional edges + checkpointing |
 | GitHub integration | Remote GitHub MCP server via Streamable HTTP |
 | Code parsing | tree-sitter — function and class level chunks |
@@ -96,7 +96,8 @@ tree-sitter RAG     →  complete functions       →  real understanding
 - Python 3.11+
 - Node 18+
 - Supabase account (free)
-- Groq API key (free)
+- Groq API key (required for default provider)
+- Claude/Gemini API keys (optional; provided via UI)
 - LangSmith account (free)
 - GitHub App with App ID + private key
 
@@ -154,7 +155,7 @@ npm run dev
 # start a review
 curl -X POST http://localhost:8000/review \
   -H "Content-Type: application/json" \
-  -d '{"pr_url": "https://github.com/owner/repo/pull/42", "mode": "human_in_loop"}'
+  -d '{"pr_url": "https://github.com/owner/repo/pull/42", "mode": "human_in_loop", "llm_provider": "groq", "llm_api_key": null, "llm_model": null}'
 
 # stream progress
 curl http://localhost:8000/stream/{thread_id}
