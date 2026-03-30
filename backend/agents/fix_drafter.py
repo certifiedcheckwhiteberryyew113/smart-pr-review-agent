@@ -204,6 +204,111 @@ async def draft_fix(state: WorkflowState) -> WorkflowState:
             if ok:
                 fix_diff = _git_diff(Path(clone_dir))
                 break
+        if fix_diff:
+            pr_detail_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{state['pr_number']}"
+            headers = {
+                "Authorization": f"Bearer {installation_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                pr_detail_resp = await client.get(pr_detail_url, headers=headers)
+                pr_detail_resp.raise_for_status()
+                pr_detail_payload = pr_detail_resp.json()
+                base_ref = str(pr_detail_payload["base"]["ref"])
+                head_user = owner
+                bot_branch = f"smart-pr-review-bot/fix-{state['pr_number']}-{int(asyncio.get_running_loop().time() * 1000)}"
+                subprocess.run(
+                    ["git", "checkout", "-B", bot_branch],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", "smart-pr-review-bot"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "config", "user.email", "smart-pr-review-bot@users.noreply.github.com"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                commit_message = f"chore: fix PR #{state['pr_number']} issues"
+                commit_proc = subprocess.run(
+                    ["git", "commit", "-m", commit_message],
+                    cwd=str(clone_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if commit_proc.returncode == 0:
+                    push_proc = subprocess.run(
+                        ["git", "push", "-u", "origin", bot_branch],
+                        cwd=str(clone_dir),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                else:
+                    push_proc = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=commit_proc.stderr)
+                create_pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+                pr_title = f"[smart-pr-review-bot] Fix PR #{state['pr_number']}"
+                pr_body = (
+                    "## Smart fix drafted by smart-pr-review-agent\n"
+                    f"Base branch: `{base_ref}`\n"
+                    "This PR was created from the bot branch after local tests passed.\n"
+                    f"\nOriginal PR: {state['pr_url']}\n"
+                )
+                create_payload = {
+                    "title": pr_title,
+                    "head": f"{head_user}:{bot_branch}",
+                    "base": base_ref,
+                    "body": pr_body,
+                }
+                create_pr_resp = await client.post(create_pr_url, headers=headers, json=create_payload)
+                created = False
+                fix_pr_url = ""
+                fix_pr_number = None
+                if create_pr_resp.status_code in (201, 200):
+                    created = True
+                    created_payload = create_pr_resp.json()
+                    fix_pr_url = str(created_payload["html_url"])
+                    fix_pr_number = created_payload["number"]
+                else:
+                    created = False
+                merged = False
+                merge_status = ""
+                should_merge = state["mode"] in {"auto_pilot", "human_in_loop"} and str(state.get("approval_status", "")).lower() in {"approved", "tests_passed", "merged", "queued"}
+                if created and should_merge and fix_pr_number is not None:
+                    merge_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{fix_pr_number}/merge"
+                    merge_payload = {"merge_method": "squash"}
+                    merge_resp = await client.put(merge_url, headers=headers, json=merge_payload)
+                    if merge_resp.status_code == 200:
+                        merged = True
+                        merge_status = "merged"
+                    else:
+                        merge_status = f"merge_failed:{merge_resp.status_code}"
+                if fix_diff:
+                    extra_info = []
+                    if fix_pr_url:
+                        extra_info.append(f"Fix PR: {fix_pr_url}")
+                    if merge_status:
+                        extra_info.append(f"Merge status: {merge_status}")
+                    if extra_info:
+                        test_output = (test_output or "") + "\n" + "\n".join(extra_info)
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
     updated = dict(state)
